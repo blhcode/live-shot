@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ff2d7a"/>
+      <stop offset="1" stop-color="#ff9a2d"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="120" height="120" rx="26" fill="url(#bg)"/>
+  <rect x="18" y="42" width="66" height="48" rx="8" fill="#14151c"/>
+  <polygon points="84,56 110,42 110,90 84,76" fill="#14151c"/>
+  <circle cx="40" cy="30" r="12" fill="#14151c"/>
+  <circle cx="66" cy="30" r="12" fill="#14151c"/>
+  <circle cx="34" cy="56" r="6" fill="#ff2020"/>
+  <text x="51" y="80" font-family="Arial Black, Arial, sans-serif" font-weight="900" font-size="18" fill="#ffd400" text-anchor="middle">LIVE</text>
+</svg>
