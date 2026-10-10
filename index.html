@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Live Shot – Concert Camera Operator</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <canvas id="gl"></canvas>
+
+  <div id="hud" class="hidden">
+    <div id="topbar">
+      <div class="tb-left">
+        <span id="rec" class="rec off">● REC</span>
+        <span id="recTime">press R to record</span>
+      </div>
+      <div class="tb-center">
+        <div id="section">STANDBY</div>
+        <div id="clock">0:00 / 0:00</div>
+      </div>
+      <div class="tb-right">
+        <div id="score">0</div>
+        <div id="modeLabel"></div>
+      </div>
+    </div>
+
+    <div id="mainFrame">
+      <div class="thirds"><i></i><i></i><i></i><i></i></div>
+      <div id="tallyLabel"></div>
+      <div id="lensInfo"></div>
+      <div id="cue"><div id="cueNow"></div><div id="cueNext"></div></div>
+      <div id="framing"><span>FRAMING</span><div class="bar"><i></i></div><em></em></div>
+      <div id="warn"></div>
+      <div id="popups"></div>
+      <div id="lockHint">Click the picture to grab the camera · H for help</div>
+    </div>
+
+    <div class="mon" data-i="0"><span class="mlabel"></span><div class="mq"><i></i></div></div>
+    <div class="mon" data-i="1"><span class="mlabel"></span><div class="mq"><i></i></div></div>
+    <div class="mon" data-i="2"><span class="mlabel"></span><div class="mq"><i></i></div></div>
+    <div class="mon prog"><canvas id="program" width="1280" height="720"></canvas><span class="mlabel">PROGRAM · RECORDED FEED</span></div>
+
+    <div id="help" class="hidden">
+      <h3>Controls</h3>
+      <table>
+        <tr><td>1 / 2 / 3</td><td>Switch camera</td></tr>
+        <tr class="director-only"><td>Space</td><td>TAKE – put the camera you're operating on air</td></tr>
+        <tr><td>Click picture</td><td>Grab camera (mouse pans &amp; tilts) · Esc releases</td></tr>
+        <tr><td>Arrow keys</td><td>Pan / tilt</td></tr>
+        <tr><td>W A S D</td><td>Move camera (dolly / truck)</td></tr>
+        <tr><td>Q / E</td><td>Lower / raise camera</td></tr>
+        <tr><td>Scroll · Z / X</td><td>Zoom in / out</td></tr>
+        <tr><td>Shift</td><td>Slow, precise moves</td></tr>
+        <tr><td>C</td><td>Reset this camera to its start position</td></tr>
+        <tr><td>R</td><td>Start / stop recording</td></tr>
+        <tr><td>G</td><td>Toggle framing guides</td></tr>
+        <tr><td>P</td><td>Pause</td></tr>
+        <tr><td>H</td><td>Show / hide this help</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div id="menu" class="screen">
+    <div class="panel">
+      <h1>LIVE SHOT</h1>
+      <p class="tag">You're the camera operator tonight. <b>The Neon Foxes</b> are on stage. Three cameras, one take — don't miss a moment.</p>
+      <div class="cams">
+        <div><b>CAM 1 · PIT</b><span>Tripod in the photo pit. Close-ups of whoever is at the front.</span></div>
+        <div><b>CAM 2 · FOH RISER</b><span>Long lens behind the crowd. Big wides or tight telephoto.</span></div>
+        <div><b>CAM 3 · STAGE WING</b><span>Handheld on the side of the stage. Dramatic side angles.</span></div>
+      </div>
+      <div class="how">
+        <p><b>How to score:</b> press <kbd>R</kbd> to roll before the show starts. The director tells you who to shoot. Keep them well framed on the <b>live</b> camera, cut on the section changes, and catch the big moments (★). Don't hold one shot too long, and don't cut too fast.</p>
+      </div>
+      <div class="modes">
+        <label><input type="radio" name="mode" value="simple" checked /> <b>Operator</b> — switching camera puts it on air straight away</label>
+        <label><input type="radio" name="mode" value="director" /> <b>Director</b> — line up the next shot in preview, press <kbd>Space</kbd> to take it live</label>
+      </div>
+      <button id="startBtn">START THE SHOW</button>
+      <p class="small">Controls: 1/2/3 cameras · click + mouse to aim · WASD move · Q/E height · scroll or Z/X zoom · R record · H help</p>
+    </div>
+  </div>
+
+  <div id="paused" class="screen hidden"><div class="panel small-panel"><h2>PAUSED</h2><p>Press P to resume</p></div></div>
+
+  <div id="results" class="screen hidden">
+    <div class="panel wide">
+      <div class="res-top">
+        <div class="grade" id="resGrade">A</div>
+        <div>
+          <h2>That's a wrap!</h2>
+          <div class="bigscore"><span id="resScore">0</span> pts</div>
+        </div>
+      </div>
+      <div class="res-body">
+        <div class="stats">
+          <ul id="resStats"></ul>
+          <h4>Big moments</h4>
+          <ul id="resMoments"></ul>
+        </div>
+        <div class="tape">
+          <video id="resVideo" controls></video>
+          <p id="noTape" class="hidden">Nothing was recorded… you never hit R!</p>
+          <a id="resDownload" class="btn" download="live-shot.webm">Download recording</a>
+        </div>
+      </div>
+      <button id="againBtn">PLAY AGAIN</button>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

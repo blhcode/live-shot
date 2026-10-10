@@ -1,0 +1,16 @@
+{
+  "name": "live-shot",
+  "version": "1.0.0",
+  "description": "Be the camera operator at a live concert: three cameras, one show, record it.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 5180",
+    "build": "vite build",
+    "preview": "vite preview --port 5180"
+  },
+  "dependencies": {
+    "three": "^0.186.1",
+    "vite": "^8.3.4"
+  }
+}
