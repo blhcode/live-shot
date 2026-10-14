@@ -1,7 +1,6 @@
 import * as THREE from 'three';
-import { BAR, MOMENTS, MOMENT_POINTS, SHOW_LENGTH, activeMoment, sectionAt } from './show.js';
+import { T, MOMENT_POINTS, activeMoment, sectionAt } from './show.js';
 
-const MEMBERS = ['singer', 'guitar', 'drums', 'keys'];
 const v = new THREE.Vector3();
 
 function project(p, cam) {
@@ -10,7 +9,12 @@ function project(p, cam) {
   return { x: v.x, y: v.y, in: inFront && Math.abs(v.x) <= 1 && Math.abs(v.y) <= 1, front: inFront };
 }
 
-// Returns 0..1 for how well `cam` frames one performer.
+// On-screen length between two projected points, as a fraction of frame height.
+function span(a, b, cam) {
+  return Math.hypot((a.x - b.x) * cam.aspect, a.y - b.y) / 2;
+}
+
+// Returns 0..1 for how well `cam` frames one person.
 export function framePerson(cam, pts) {
   const head = project(pts.head, cam);
   const chest = project(pts.chest, cam);
@@ -19,7 +23,7 @@ export function framePerson(cam, pts) {
   if (!head.front || !chest.front) return { q: 0, note: 'Not in shot' };
   const visible = (head.in ? 0.5 : 0) + (chest.in ? 0.3 : 0) + (hips.in ? 0.2 : 0);
   if (visible === 0) return { q: 0, note: 'Not in shot' };
-  const h = Math.abs(head.y - feet.y) / 2;
+  const h = span(head, feet, cam);
   let size;
   if (h < 0.1) size = 0.15;
   else if (h < 0.3) size = 0.15 + ((h - 0.1) / 0.2) * 0.85;
@@ -39,44 +43,69 @@ export function framePerson(cam, pts) {
   return { q, note };
 }
 
-export function frameWide(cam, band) {
+export function frameWide(cam, cast) {
+  const ids = cast.ids;
   let inCount = 0;
   let sizeSum = 0;
-  for (const id of MEMBERS) {
-    const pts = band.focusPoints(id);
+  for (const id of ids) {
+    if (cast.members[id].root.visible === false) continue;
+    const pts = cast.focusPoints(id);
     const head = project(pts.head, cam);
     const chest = project(pts.chest, cam);
     if (head.in && chest.in) {
       inCount++;
-      sizeSum += Math.abs(head.y - project(pts.feet, cam).y) / 2;
+      sizeSum += span(head, project(pts.feet, cam), cam);
     }
   }
-  if (inCount === 0) return { q: 0, note: 'Band not in shot' };
+  const total = ids.length;
+  if (inCount === 0) return { q: 0, note: 'Nobody in shot' };
   const avg = sizeSum / inCount;
-  let q = inCount / 4;
-  if (inCount < 3) q *= 0.5;
+  const tooTight = total <= 2 ? 0.9 : 0.6;
+  let q = inCount / total;
+  if (inCount < total * 0.7) q *= 0.5;
   if (avg < 0.06) q *= 0.5;
-  if (avg > 0.6) q *= 0.6;
-  let note = inCount === 4 ? 'Whole band – nice' : `${inCount}/4 of the band`;
+  if (avg > tooTight) q *= 0.6;
+  let note = inCount === total ? 'Everyone in – nice' : `${inCount}/${total} in shot`;
   if (avg < 0.06) note = 'Too far – zoom in a bit';
-  if (avg > 0.6) note = 'Too tight for a wide';
+  if (avg > tooTight) note = 'Too tight for a wide';
   return { q, note };
 }
 
-export function evaluate(cam, focus, band) {
+export function frameCrowd(cam, venue) {
+  let inCount = 0;
+  let sizeSum = 0;
+  for (const s of venue.crowdSamples) {
+    const head = project(s.head, cam);
+    if (head.in) {
+      inCount++;
+      sizeSum += span(head, project(s.feet, cam), cam);
+    }
+  }
+  if (inCount === 0) return { q: 0, note: 'Point a camera at the crowd' };
+  const avg = sizeSum / inCount;
+  let q = Math.min(1, inCount / 5);
+  let note = q >= 1 ? 'Great crowd shot' : 'Get more of the crowd in';
+  if (avg < 0.05) { q *= 0.6; note = 'Crowd too far away'; }
+  return { q, note };
+}
+
+export function evaluate(cam, focus, cast, venue) {
   if (!focus) return { q: 0, note: '' };
-  if (focus === 'wide') return frameWide(cam, band);
-  return framePerson(cam, band.focusPoints(focus));
+  if (focus === 'wide') return frameWide(cam, cast);
+  if (focus === 'crowd') return frameCrowd(cam, venue);
+  if (cast.members[focus].root.visible === false) return { q: 0, note: 'Hidden' };
+  return framePerson(cam, cast.focusPoints(focus));
 }
 
 export class Scorer {
   constructor() {
+    const moments = T.show.moments;
     this.score = 0;
     this.events = [];
     this.lastCutTime = null;
     this.liveId = null;
     this.shots = [];
-    this.moments = Object.fromEntries(MOMENTS.map((m) => [m.id, { best: 0, done: false, hit: false }]));
+    this.moments = Object.fromEntries(moments.map((m) => [m.id, { best: 0, done: false, hit: false }]));
     this.recordedTime = 0;
     this.goodTime = 0;
     this.jumpCuts = 0;
@@ -109,8 +138,8 @@ export class Scorer {
 
   // liveQ: framing quality of the program camera for the director's focus.
   update(t, dt, liveQ, momentQ, recording) {
-    if (t < 0 || t > SHOW_LENGTH) return;
-    const bar = t / BAR;
+    if (t < 0 || t > T.length) return;
+    const bar = t / T.bar;
     const sec = sectionAt(bar);
     if (sec && sec !== this.lastSection) {
       this.lastSection = sec;
@@ -138,10 +167,10 @@ export class Scorer {
       this.pendingCutCheck = null;
     }
 
-    for (const m of MOMENTS) {
+    const am = activeMoment(bar);
+    for (const m of T.show.moments) {
       const st = this.moments[m.id];
       if (st.done) continue;
-      const am = activeMoment(bar);
       if (am === m && recording) st.best = Math.max(st.best, momentQ[m.id] ?? 0);
       if (bar >= m.bar + m.dur) {
         st.done = true;
@@ -157,8 +186,9 @@ export class Scorer {
   }
 
   finish(t) {
-    if (this.lastCutTime !== null) this.shots.push(Math.max(0, Math.min(t, SHOW_LENGTH) - this.lastCutTime));
-    const max = SHOW_LENGTH * 10 + MOMENTS.length * MOMENT_POINTS;
+    const moments = T.show.moments;
+    if (this.lastCutTime !== null) this.shots.push(Math.max(0, Math.min(t, T.length) - this.lastCutTime));
+    const max = T.length * 10 + moments.length * MOMENT_POINTS;
     const pct = Math.max(0, this.score) / max;
     const grade = pct >= 0.8 ? 'S' : pct >= 0.65 ? 'A' : pct >= 0.5 ? 'B' : pct >= 0.35 ? 'C' : pct >= 0.2 ? 'D' : 'F';
     const avgShot = this.shots.length ? this.shots.reduce((a, b) => a + b, 0) / this.shots.length : 0;
@@ -166,13 +196,13 @@ export class Scorer {
       score: Math.round(this.score),
       grade,
       pct,
-      recordedPct: Math.min(1, this.recordedTime / SHOW_LENGTH),
-      goodPct: Math.min(1, this.goodTime / SHOW_LENGTH),
+      recordedPct: Math.min(1, this.recordedTime / T.length),
+      goodPct: Math.min(1, this.goodTime / T.length),
       cuts: Math.max(0, this.shots.length - 1),
       avgShot,
       jumpCuts: this.jumpCuts,
       greatCuts: this.greatCuts,
-      moments: MOMENTS.map((m) => ({ label: m.label, hit: this.moments[m.id].hit })),
+      moments: moments.map((m) => ({ label: m.label, hit: this.moments[m.id].hit })),
     };
   }
 }

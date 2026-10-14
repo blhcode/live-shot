@@ -79,10 +79,20 @@ body:not(.director) .director-only { display: none; }
 .small-panel { text-align: center; }
 h1 { margin: 0; font-size: 56px; letter-spacing: 6px; background: linear-gradient(90deg, #ff2d7a, #ffd400); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .tag { font-size: 17px; color: #ccc; }
-.cams { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 16px 0; }
-.cams div { background: #151722; border-radius: 8px; padding: 10px; border-left: 3px solid #ffd400; }
-.cams b { display: block; font-family: monospace; margin-bottom: 4px; }
-.cams span { font-size: 13px; color: #aaa; }
+.panel:has(.shows) { max-width: 980px; width: 94vw; max-height: 96vh; overflow-y: auto; }
+.shows { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 14px 0 8px; }
+.show-card { all: unset; cursor: pointer; display: flex; flex-direction: column; gap: 5px; background: #151722; border-radius: 10px; padding: 12px; border: 2px solid transparent; border-top: 4px solid var(--c); transition: transform 0.12s, border-color 0.12s; }
+.show-card:hover { transform: translateY(-2px); }
+.show-card.selected { border-color: var(--c); background: #1c1f2e; box-shadow: 0 0 18px color-mix(in srgb, var(--c) 35%, transparent); }
+.show-card b { font-size: 17px; color: #fff; }
+.sc-kind { font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--c); font-weight: bold; }
+.sc-blurb { font-size: 12.5px; color: #aaa; line-height: 1.4; flex: 1; }
+.sc-meta { font-size: 11.5px; color: #888; font-family: monospace; }
+.sc-meta em { font-style: normal; color: #ffd400; font-weight: bold; }
+.camlist { display: flex; gap: 10px; font-size: 12px; color: #aaa; font-family: monospace; }
+.camlist div { background: #151722; padding: 4px 8px; border-radius: 6px; border-left: 3px solid var(--accent, #ffd400); }
+.res-show { font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: var(--accent, #ffd400); font-weight: bold; }
+.res-best { font-size: 13px; color: #aaa; }
 .how p { font-size: 14px; color: #bbb; line-height: 1.5; }
 .modes { display: flex; flex-direction: column; gap: 6px; margin: 12px 0 18px; font-size: 14px; }
 .modes label { cursor: pointer; }

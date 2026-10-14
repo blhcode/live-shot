@@ -64,12 +64,9 @@
   <div id="menu" class="screen">
     <div class="panel">
       <h1>LIVE SHOT</h1>
-      <p class="tag">You're the camera operator tonight. <b>The Neon Foxes</b> are on stage. Three cameras, one take — don't miss a moment.</p>
-      <div class="cams">
-        <div><b>CAM 1 · PIT</b><span>Tripod in the photo pit. Close-ups of whoever is at the front.</span></div>
-        <div><b>CAM 2 · FOH RISER</b><span>Long lens behind the crowd. Big wides or tight telephoto.</span></div>
-        <div><b>CAM 3 · STAGE WING</b><span>Handheld on the side of the stage. Dramatic side angles.</span></div>
-      </div>
+      <p class="tag">You're the camera operator tonight. Three cameras, one take — don't miss a moment. <b>Pick tonight's show:</b></p>
+      <div id="showList" class="shows"></div>
+      <div id="camList" class="camlist"></div>
       <div class="how">
         <p><b>How to score:</b> press <kbd>R</kbd> to roll before the show starts. The director tells you who to shoot. Keep them well framed on the <b>live</b> camera, cut on the section changes, and catch the big moments (★). Don't hold one shot too long, and don't cut too fast.</p>
       </div>
@@ -89,8 +86,10 @@
       <div class="res-top">
         <div class="grade" id="resGrade">A</div>
         <div>
+          <div class="res-show" id="resShow"></div>
           <h2>That's a wrap!</h2>
           <div class="bigscore"><span id="resScore">0</span> pts</div>
+          <div class="res-best" id="resBest"></div>
         </div>
       </div>
       <div class="res-body">
@@ -105,7 +104,7 @@
           <a id="resDownload" class="btn" download="live-shot.webm">Download recording</a>
         </div>
       </div>
-      <button id="againBtn">PLAY AGAIN</button>
+      <button id="againBtn">BACK TO THE SHOWS</button>
     </div>
   </div>
 

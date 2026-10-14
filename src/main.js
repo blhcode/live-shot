@@ -1,18 +1,18 @@
 import * as THREE from 'three';
 import { Venue } from './stage.js';
-import { Band } from './performers.js';
-import { CameraRig, RIG_DEFS, fovToMm } from './cameras.js';
+import { CameraRig, fovToMm } from './cameras.js';
 import { Music } from './music.js';
 import { Recorder } from './recorder.js';
 import { Scorer, evaluate } from './scoring.js';
+import { SHOWS, getShow } from './shows/index.js';
 import {
-  BAR, BAND_NAME, MOMENTS, SHOW_LENGTH, STANDBY_SECONDS, SUBJECTS,
+  T, STANDBY_SECONDS, setShow, subjectName,
   activeMoment, formatTime, nextSection, sectionAt, upcomingMoment,
 } from './show.js';
 
 const $ = (id) => document.getElementById(id);
 
-// ---------- renderer & world ----------
+// ---------- renderer ----------
 const canvas = $('gl');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
@@ -20,31 +20,84 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.1;
 renderer.setScissorTest(true);
 
-const scene = new THREE.Scene();
-const venue = new Venue(scene);
-const band = new Band(scene);
-const rigs = RIG_DEFS.map((d) => new CameraRig(d, scene));
-
 const programCanvas = $('program');
 const pctx = programCanvas.getContext('2d');
+
+// ---------- world (rebuilt whenever a show is loaded) ----------
+let show = null;
+let scene = null;
+let venue = null;
+let cast = null;
+let rigs = [];
+
+function disposeScene(s) {
+  s.traverse((o) => {
+    if (o.geometry) o.geometry.dispose();
+    if (o.material && o.material.map) o.material.map.dispose();
+  });
+}
+
+function loadShow(id) {
+  if (scene) disposeScene(scene);
+  show = getShow(id);
+  setShow(show);
+  scene = new THREE.Scene();
+  venue = new Venue(scene, show.venue);
+  cast = show.createCast(scene, venue);
+  rigs = show.rigs.map((d) => new CameraRig(d, scene));
+  document.documentElement.style.setProperty('--accent', show.accent);
+}
 
 // ---------- game state ----------
 let state = 'menu';
 let mode = localStorage.getItem('liveshot-mode') || 'simple';
+let selectedShow = localStorage.getItem('liveshot-show') || SHOWS[0].id;
 let opIdx = 1;
 let liveIdx = 1;
 let music = null;
 let recorder = null;
-let scorer = new Scorer();
+let scorer = null;
 let paused = false;
 let guides = true;
 let lastFrame = performance.now();
-let menuT = -STANDBY_SECONDS;
 let L = null;
-let quality = [0, 0, 0];
-let notes = ['', '', ''];
+const quality = [0, 0, 0];
+const notes = ['', '', ''];
 
 document.querySelector(`input[name=mode][value=${mode}]`).checked = true;
+
+// ---------- menu: show picker ----------
+function bestFor(id) {
+  try { return JSON.parse(localStorage.getItem(`liveshot-best-${id}`)); } catch { return null; }
+}
+
+function buildShowList() {
+  const list = $('showList');
+  list.innerHTML = '';
+  for (const s of SHOWS) {
+    const best = bestFor(s.id);
+    const len = formatTime(s.sections[s.sections.length - 1].end * (240 / s.bpm));
+    const card = document.createElement('button');
+    card.className = `show-card${s.id === selectedShow ? ' selected' : ''}`;
+    card.style.setProperty('--c', s.accent);
+    card.innerHTML = `
+      <span class="sc-kind">${s.kind}</span>
+      <b>${s.card}</b>
+      <span class="sc-blurb">${s.blurb}</span>
+      <span class="sc-meta">${len} · ${s.moments.length} big moments${best ? ` · best <em>${best.grade}</em> ${best.score.toLocaleString()}` : ''}</span>`;
+    card.addEventListener('click', () => selectShow(s.id));
+    list.appendChild(card);
+  }
+  const s = getShow(selectedShow);
+  $('camList').innerHTML = s.rigs.map((r) => `<div><b>CAM ${r.id} · ${r.name}</b></div>`).join('');
+}
+
+function selectShow(id) {
+  selectedShow = id;
+  localStorage.setItem('liveshot-show', id);
+  loadShow(id);
+  buildShowList();
+}
 
 // ---------- input ----------
 const keys = new Set();
@@ -130,10 +183,11 @@ function startShow() {
   mode = document.querySelector('input[name=mode]:checked').value;
   localStorage.setItem('liveshot-mode', mode);
   document.body.classList.toggle('director', mode === 'director');
-  $('modeLabel').textContent = mode === 'director' ? 'DIRECTOR MODE' : 'OPERATOR MODE';
+  $('modeLabel').textContent = `${show.card.toUpperCase()} · ${mode === 'director' ? 'DIRECTOR' : 'OPERATOR'}`;
   $('menu').classList.add('hidden');
   $('hud').classList.remove('hidden');
-  music = new Music();
+  loadShow(selectedShow);
+  music = new Music(show);
   music.begin();
   recorder = new Recorder(programCanvas, music.recordDest.stream);
   scorer = new Scorer();
@@ -146,14 +200,21 @@ function startShow() {
 async function endShow() {
   state = 'results';
   document.exitPointerLock();
-  const t = music.time;
-  const res = scorer.finish(t);
+  const res = scorer.finish(music.time);
   music.stop();
   const blob = await recorder.finish();
   $('hud').classList.add('hidden');
   $('results').classList.remove('hidden');
+  $('resShow').textContent = show.card;
   $('resGrade').textContent = res.grade;
   $('resScore').textContent = res.score.toLocaleString();
+  const prev = bestFor(show.id);
+  if (!prev || res.score > prev.score) {
+    localStorage.setItem(`liveshot-best-${show.id}`, JSON.stringify({ score: res.score, grade: res.grade }));
+    if (prev) $('resBest').textContent = `New best! (was ${prev.score.toLocaleString()})`;
+  } else {
+    $('resBest').textContent = `Best: ${prev.grade} · ${prev.score.toLocaleString()}`;
+  }
   const pct = (x) => `${Math.round(x * 100)}%`;
   $('resStats').innerHTML = [
     `Show recorded: <b>${pct(res.recordedPct)}</b>`,
@@ -177,7 +238,7 @@ async function endShow() {
     video.src = url;
     $('resDownload').href = url;
     const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
-    $('resDownload').download = `live-shot-${stamp}.webm`;
+    $('resDownload').download = `live-shot-${show.id}-${stamp}.webm`;
   } else {
     $('resVideo').classList.add('hidden');
     $('resDownload').classList.add('hidden');
@@ -218,6 +279,7 @@ function renderView(rig, r) {
   const y = L.H - r.y - r.h;
   renderer.setViewport(r.x, y, r.w, r.h);
   renderer.setScissor(r.x, y, r.w, r.h);
+  venue.setPointScale(r.h / L.main.h);
   renderer.render(scene, rig.cam);
 }
 
@@ -237,21 +299,20 @@ function drawProgram(t) {
     pctx.fillText('LIVE', 1140, 52);
   }
   if (t > 3 && t < 12) {
-    const a = Math.min(1, (t - 3) * 2, (12 - t) * 2);
-    pctx.globalAlpha = a;
+    pctx.globalAlpha = Math.min(1, (t - 3) * 2, (12 - t) * 2);
     const g = pctx.createLinearGradient(60, 0, 700, 0);
-    g.addColorStop(0, '#ff2d7a');
-    g.addColorStop(1, 'rgba(255,45,122,0)');
+    g.addColorStop(0, show.accent);
+    g.addColorStop(1, 'rgba(0,0,0,0)');
     pctx.fillStyle = g;
     pctx.fillRect(60, 590, 640, 64);
     pctx.fillStyle = '#fff';
     pctx.font = 'bold 34px Arial Black, Arial';
-    pctx.fillText(BAND_NAME, 80, 632);
+    pctx.fillText(show.title.toUpperCase(), 80, 632);
     pctx.fillStyle = 'rgba(0,0,0,0.6)';
-    pctx.fillRect(60, 654, 420, 30);
+    pctx.fillRect(60, 654, 470, 30);
     pctx.fillStyle = '#ddd';
     pctx.font = '18px Arial';
-    pctx.fillText('LIVE IN CONCERT · "Neon Nights"', 76, 675);
+    pctx.fillText(show.lowerThird, 76, 675);
     pctx.globalAlpha = 1;
   }
 }
@@ -266,15 +327,13 @@ const ui = {
 };
 let recSeconds = 0;
 
-function qColor(q) {
-  return q > 0.65 ? '#2ecc71' : q > 0.35 ? '#f1c40f' : '#e74c3c';
-}
+const qColor = (q) => (q > 0.65 ? '#2ecc71' : q > 0.35 ? '#f1c40f' : '#e74c3c');
 
 function updateHud(t, focus) {
-  const bar = t / BAR;
+  const bar = t / T.bar;
   const sec = t >= 0 ? sectionAt(bar) : null;
   ui.section.textContent = t < 0 ? 'STANDBY' : sec ? sec.name.toUpperCase() : 'END';
-  ui.clock.textContent = t < 0 ? `Show starts in ${Math.ceil(-t)}s` : `${formatTime(t)} / ${formatTime(SHOW_LENGTH)}`;
+  ui.clock.textContent = t < 0 ? `Show starts in ${Math.ceil(-t)}s` : `${formatTime(t)} / ${formatTime(T.length)}`;
   ui.score.textContent = Math.round(scorer.score).toLocaleString();
   const recOn = recorder && recorder.active;
   ui.rec.className = `rec ${recOn ? 'on' : 'off'}`;
@@ -284,22 +343,23 @@ function updateHud(t, focus) {
   const isLive = opIdx === liveIdx;
   ui.frame.className = isLive ? 'live' : 'preview';
   ui.tally.textContent = `CAM ${op.id} · ${op.name} — ${isLive ? 'LIVE' : 'PREVIEW'}`;
-  ui.lens.innerHTML = `${fovToMm(op.fov)}mm<br>height ${(op.pos.y - (op.id === 3 ? 1.2 : op.id === 2 ? 3 : 0)).toFixed(1)}m`;
+  ui.lens.innerHTML = `${fovToMm(op.fov)}mm<br>height ${(op.pos.y - (op.def.floorY ?? 0)).toFixed(1)}m`;
 
   if (t < 0) {
+    const first = show.sections[0].focus;
     ui.cueNow.innerHTML = recOn
-      ? `Standby… rolling. First up: <b>${SUBJECTS.wide}</b>`
+      ? `Standby… rolling. First up: <b>${subjectName(first)}</b>`
       : `Standby! Press <b>R</b> to start recording before the show begins`;
     ui.cueNext.innerHTML = '';
   } else if (sec) {
-    ui.cueNow.innerHTML = `NOW: ${sec.name} → <b>${SUBJECTS[sec.focus]}</b>`;
+    ui.cueNow.innerHTML = `NOW: ${sec.name} → <b>${subjectName(sec.focus)}</b>`;
     const am = activeMoment(bar);
     const um = upcomingMoment(bar, 2);
     const ns = nextSection(bar);
     let next = '';
     if (am) next = `<span class="star">★ NOW: ${am.label}!</span>`;
-    else if (um) next = `<span class="star">★ GET READY: ${um.label} (${SUBJECTS[um.subject]}) in ${Math.ceil((um.bar - bar) * BAR)}s</span>`;
-    else if (ns && (ns.start - bar) * BAR <= 5) next = `<span>NEXT in ${Math.ceil((ns.start - bar) * BAR)}s: ${ns.name} → ${SUBJECTS[ns.focus]}</span>`;
+    else if (um) next = `<span class="star">★ GET READY: ${um.label} (${subjectName(um.subject)}) in ${Math.ceil((um.bar - bar) * T.bar)}s</span>`;
+    else if (ns && (ns.start - bar) * T.bar <= 5) next = `<span>NEXT in ${Math.ceil((ns.start - bar) * T.bar)}s: ${ns.name} → ${subjectName(ns.focus)}</span>`;
     ui.cueNext.innerHTML = next;
   }
 
@@ -310,7 +370,7 @@ function updateHud(t, focus) {
 
   let warn = '';
   let soft = false;
-  if (t >= 0 && t < SHOW_LENGTH && !recOn) warn = 'NOT RECORDING — press R';
+  if (t >= 0 && t < T.length && !recOn) warn = 'NOT RECORDING — press R';
   else if (t >= 0 && scorer.stale) { warn = 'Shot is getting stale — cut to another camera'; soft = true; }
   ui.warn.textContent = warn;
   ui.warn.style.display = warn ? 'block' : 'none';
@@ -321,9 +381,9 @@ function updateHud(t, focus) {
   ui.mons.forEach((el, i) => {
     el.className = `mon ${i === liveIdx ? 'live' : i === opIdx ? 'preview' : ''}`;
     el.querySelector('.mlabel').textContent = `${i + 1} · ${rigs[i].name}${i === liveIdx ? ' · LIVE' : ''}`;
-    const bar = el.querySelector('.mq i');
-    bar.style.width = `${Math.round(quality[i] * 100)}%`;
-    bar.style.background = qColor(quality[i]);
+    const mb = el.querySelector('.mq i');
+    mb.style.width = `${Math.round(quality[i] * 100)}%`;
+    mb.style.background = qColor(quality[i]);
   });
 
   while (scorer.events.length) {
@@ -354,6 +414,12 @@ function readInput(dt) {
   return input;
 }
 
+function followPoint(focus) {
+  if (focus === 'crowd') return venue.crowdCenter;
+  const id = focus && focus !== 'wide' && cast.members[focus].root.visible !== false ? focus : cast.followDefault;
+  return cast.focusPoints(id).chest;
+}
+
 function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, (now - lastFrame) / 1000);
@@ -361,39 +427,41 @@ function frame(now) {
 
   let t;
   if (state === 'show') t = music.time;
-  else if (state === 'menu') { t = menuT; }
-  else t = SHOW_LENGTH + 3;
+  else if (state === 'menu') t = show.preview + ((now / 1000) % 16);
+  else t = T.length + 3;
 
   if (state === 'show' && !paused) rigs[opIdx].control(readInput(dt), dt);
   else readInput(dt);
 
   const effDt = paused ? 0 : dt;
-  band.update(t);
-  const bar = t / BAR;
+  cast.update(t);
+  const bar = t / T.bar;
   const sec = t >= 0 ? sectionAt(bar) : null;
   const focus = sec ? sec.focus : null;
-  const followId = focus && focus !== 'wide' ? focus : 'singer';
-  venue.update(t, effDt, band.focusPoints(followId).chest);
-  for (const r of rigs) {
-    r.apply(effDt);
-    r.setTally(rigs.indexOf(r) === liveIdx ? 'live' : rigs.indexOf(r) === opIdx ? 'preview' : 'off');
-  }
-
+  venue.update(t, effDt, followPoint(focus));
   rigs.forEach((r, i) => {
-    const e = evaluate(r.cam, focus || (t < 0 ? 'wide' : null), band);
-    quality[i] = e.q;
-    notes[i] = e.note;
+    r.apply(effDt);
+    r.setTally(i === liveIdx ? 'live' : i === opIdx ? 'preview' : 'off');
   });
+
+  if (state === 'show') {
+    const evalFocus = focus || show.sections[0].focus;
+    rigs.forEach((r, i) => {
+      const e = evaluate(r.cam, evalFocus, cast, venue);
+      quality[i] = e.q;
+      notes[i] = e.note;
+    });
+  }
 
   if (state === 'show' && !paused) {
     const recOn = recorder.active;
     if (recOn) recSeconds += dt;
     const am = activeMoment(bar);
     const momentQ = {};
-    if (am) momentQ[am.id] = evaluate(rigs[liveIdx].cam, am.subject, band).q;
+    if (am) momentQ[am.id] = evaluate(rigs[liveIdx].cam, am.subject, cast, venue).q;
     scorer.update(t, dt, focus ? quality[liveIdx] : 0, momentQ, recOn);
     updateHud(t, focus);
-    if (t > SHOW_LENGTH + 2.5) endShow();
+    if (t > T.length + 2.5) endShow();
   }
 
   renderer.setViewport(0, 0, L.W, L.H);
@@ -406,16 +474,21 @@ function frame(now) {
   if (state !== 'menu') rigs.forEach((r, i) => renderView(r, L.mons[i]));
 }
 
+loadShow(selectedShow);
+buildShowList();
 requestAnimationFrame(frame);
 
 // Exposed for debugging from the browser console.
 window.liveShot = {
-  rigs, band, venue, MOMENTS,
+  get rigs() { return rigs; },
+  get cast() { return cast; },
+  get venue() { return venue; },
   get music() { return music; },
   get scorer() { return scorer; },
   skipTo(sec) {
     music.t0 = music.ctx.currentTime - sec;
-    music.nextStep = Math.ceil(sec / (BAR / 16));
+    music.nextStep = Math.ceil(sec / (T.bar / 16));
   },
   select: selectCam,
+  selectShow,
 };

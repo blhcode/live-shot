@@ -1,36 +1,10 @@
-import { BAR, SECTIONS, STANDBY_SECONDS, sectionAt } from './show.js';
+import { T, STANDBY_SECONDS, sectionAt } from './show.js';
 
-const STEP = BAR / 16;
 const LOOKAHEAD = 0.2;
 
-const MIN = [0, 3, 7];
-const MAJ = [0, 4, 7];
-// Am - F - C - G
-const CHORDS = [
-  { root: 45, q: MIN },
-  { root: 41, q: MAJ },
-  { root: 48, q: MAJ },
-  { root: 43, q: MAJ },
-];
+export const mtof = (m) => 440 * Math.pow(2, (m - 69) / 12);
 
-// [step, midi, lengthInSteps] per bar of the 4-bar progression.
-const VERSE_MELODY = [
-  [[0, 76, 2], [3, 76, 2], [6, 74, 2], [8, 72, 4], [12, 69, 3]],
-  [[0, 72, 2], [2, 72, 2], [4, 69, 2], [8, 72, 3], [12, 74, 3]],
-  [[0, 76, 3], [4, 79, 2], [6, 76, 2], [8, 74, 2], [10, 72, 5]],
-  [[0, 74, 4], [4, 71, 2], [6, 67, 6]],
-];
-const CHORUS_MELODY = [
-  [[0, 81, 6], [6, 79, 2], [8, 76, 4], [12, 79, 3]],
-  [[0, 77, 4], [4, 76, 2], [6, 72, 2], [8, 77, 6]],
-  [[0, 76, 2], [2, 79, 2], [4, 84, 6], [10, 79, 4]],
-  [[0, 83, 4], [4, 79, 4], [8, 74, 6]],
-];
-const PENTA = [57, 60, 62, 64, 67, 69, 72, 74, 76, 79, 81, 84];
-
-const mtof = (m) => 440 * Math.pow(2, (m - 69) / 12);
-
-function rng(seed) {
+export function rng(seed) {
   let s = seed >>> 0;
   return () => {
     s = (s * 1664525 + 1013904223) >>> 0;
@@ -38,8 +12,10 @@ function rng(seed) {
   };
 }
 
+// Synth engine + 16th-note sequencer. Each show's `arrange(m, info)` decides what plays on every step.
 export class Music {
-  constructor() {
+  constructor(show) {
+    this.show = show;
     const ctx = new AudioContext();
     this.ctx = ctx;
     this.master = ctx.createGain();
@@ -58,23 +34,25 @@ export class Music {
     for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
 
     this.distCurve = new Float32Array(1024);
-    for (let i = 0; i < 1024; i++) {
-      const x = (i / 1023) * 2 - 1;
-      this.distCurve[i] = Math.tanh(x * 6);
-    }
+    for (let i = 0; i < 1024; i++) this.distCurve[i] = Math.tanh(((i / 1023) * 2 - 1) * 6);
 
-    this.reverb = this.makeReverb();
+    this.reverb = this.makeReverb(show.reverb ?? 2.2);
     this.t0 = null;
     this.nextStep = 0;
     this.timer = null;
-    this.soloRand = rng(42);
+    this.rand = rng(42);
+    this.state = {};
     this.crowdGain = null;
   }
 
-  makeReverb() {
+  get step() {
+    return T.bar / 16;
+  }
+
+  makeReverb(seconds) {
     const ctx = this.ctx;
     const conv = ctx.createConvolver();
-    const len = ctx.sampleRate * 2.2;
+    const len = Math.floor(ctx.sampleRate * seconds);
     const buf = ctx.createBuffer(2, len, ctx.sampleRate);
     for (let c = 0; c < 2; c++) {
       const ch = buf.getChannelData(c);
@@ -106,16 +84,24 @@ export class Music {
   stop() {
     clearInterval(this.timer);
     this.timer = null;
-    const g = this.master.gain;
-    g.setTargetAtTime(0, this.ctx.currentTime, 0.5);
+    this.master.gain.setTargetAtTime(0, this.ctx.currentTime, 0.5);
   }
 
   schedule() {
-    const lastStep = SECTIONS[SECTIONS.length - 1].end * 16;
+    const sections = this.show.sections;
+    const lastStep = sections[sections.length - 1].end * 16;
     while (this.nextStep < lastStep) {
-      const when = this.t0 + this.nextStep * STEP;
+      const when = this.t0 + this.nextStep * this.step;
       if (when > this.ctx.currentTime + LOOKAHEAD) break;
-      this.playStep(this.nextStep, Math.max(when, this.ctx.currentTime));
+      const step = this.nextStep;
+      const bar = Math.floor(step / 16);
+      const sec = sectionAt(bar);
+      if (sec) {
+        this.show.arrange(this, {
+          step, bar, s: step % 16, time: Math.max(when, this.ctx.currentTime), sec,
+          barInSec: bar - sec.start, lastBar: bar === sec.end - 1, firstStep: step === sec.start * 16,
+        });
+      }
       this.nextStep++;
     }
   }
@@ -131,7 +117,8 @@ export class Music {
     bp.frequency.value = 900;
     bp.Q.value = 0.6;
     const g = ctx.createGain();
-    g.gain.value = 0.05;
+    this.crowdIdle = this.show.crowdLevel ?? 0.05;
+    g.gain.value = this.crowdIdle;
     src.connect(bp).connect(g).connect(this.master);
     src.start();
     this.crowdGain = g;
@@ -141,7 +128,15 @@ export class Music {
     if (!this.crowdGain) return;
     const g = this.crowdGain.gain;
     g.setTargetAtTime(amount, time, 0.15);
-    g.setTargetAtTime(0.04, time + length * 0.4, length * 0.3);
+    g.setTargetAtTime(this.crowdIdle * 0.8, time + length * 0.4, length * 0.3);
+  }
+
+  applause(time, amount = 0.25, length = 3) {
+    for (let i = 0; i < length * 30; i++) {
+      const tt = time + Math.random() * length;
+      const fade = 1 - (tt - time) / length;
+      this.noiseHit(tt, { gain: amount * fade * (0.5 + Math.random() * 0.5), decay: 0.03, type: 'bandpass', freq: 1500 + Math.random() * 2000, q: 1.2 });
+    }
   }
 
   // ---------- instruments ----------
@@ -154,11 +149,15 @@ export class Music {
     return time + attack + hold + release + 0.05;
   }
 
-  tone(time, freq, dur, { type = 'sawtooth', gain = 0.1, attack = 0.01, release = 0.1, cutoff = 4000, q = 0.7, detune = 0, send = 0, dist = false, vibrato = 0 } = {}) {
+  tone(time, freq, dur, { type = 'sawtooth', gain = 0.1, attack = 0.01, release = 0.1, cutoff = 4000, q = 0.7, detune = 0, send = 0, dist = false, vibrato = 0, glide = 0 } = {}) {
     const ctx = this.ctx;
     const osc = ctx.createOscillator();
     osc.type = type;
     osc.frequency.value = freq;
+    if (glide) {
+      osc.frequency.setValueAtTime(freq * glide, time);
+      osc.frequency.exponentialRampToValueAtTime(freq, time + 0.08);
+    }
     osc.detune.value = detune;
     let node = osc;
     if (vibrato) {
@@ -192,7 +191,7 @@ export class Music {
     osc.stop(end);
   }
 
-  noiseHit(time, { gain = 0.3, decay = 0.1, type = 'highpass', freq = 7000, q = 0.7, send = 0 } = {}) {
+  noiseHit(time, { gain = 0.3, decay = 0.1, type = 'highpass', freq = 7000, q = 0.7, send = 0, attack = 0 } = {}) {
     const ctx = this.ctx;
     const src = ctx.createBufferSource();
     src.buffer = this.noise;
@@ -207,18 +206,43 @@ export class Music {
       s.gain.value = send;
       g.connect(s).connect(this.reverb);
     }
-    g.gain.setValueAtTime(gain, time);
-    g.gain.exponentialRampToValueAtTime(0.0001, time + decay);
+    if (attack) {
+      g.gain.setValueAtTime(0.0001, time);
+      g.gain.linearRampToValueAtTime(gain, time + attack);
+    } else {
+      g.gain.setValueAtTime(gain, time);
+    }
+    g.gain.exponentialRampToValueAtTime(0.0001, time + attack + decay);
     src.start(time, Math.random());
-    src.stop(time + decay + 0.05);
+    src.stop(time + attack + decay + 0.05);
   }
 
-  kick(time, gain = 0.9) {
+  // Rising filtered noise for EDM build-ups.
+  sweep(time, dur, gain = 0.15) {
+    const ctx = this.ctx;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    src.loop = true;
+    const f = ctx.createBiquadFilter();
+    f.type = 'bandpass';
+    f.Q.value = 2;
+    f.frequency.setValueAtTime(300, time);
+    f.frequency.exponentialRampToValueAtTime(9000, time + dur);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, time);
+    g.gain.exponentialRampToValueAtTime(gain, time + dur);
+    g.gain.exponentialRampToValueAtTime(0.0001, time + dur + 0.1);
+    src.connect(f).connect(g).connect(this.master);
+    src.start(time);
+    src.stop(time + dur + 0.2);
+  }
+
+  kick(time, gain = 0.9, low = 42) {
     const ctx = this.ctx;
     const osc = ctx.createOscillator();
     const g = ctx.createGain();
     osc.frequency.setValueAtTime(150, time);
-    osc.frequency.exponentialRampToValueAtTime(42, time + 0.12);
+    osc.frequency.exponentialRampToValueAtTime(low, time + 0.12);
     g.gain.setValueAtTime(gain, time);
     g.gain.exponentialRampToValueAtTime(0.0001, time + 0.35);
     osc.connect(g).connect(this.master);
@@ -231,8 +255,22 @@ export class Music {
     this.tone(time, 190, 0.03, { type: 'triangle', gain: gain * 0.6, release: 0.08, cutoff: 3000 });
   }
 
+  clap(time, gain = 0.4) {
+    for (let i = 0; i < 3; i++) this.noiseHit(time + i * 0.011, { gain: gain * 0.6, decay: 0.03, type: 'bandpass', freq: 1300, q: 1 });
+    this.noiseHit(time + 0.033, { gain, decay: 0.16, type: 'bandpass', freq: 1200, q: 0.8, send: 0.4 });
+  }
+
   hat(time, open = false, gain = 0.12) {
     this.noiseHit(time, { gain, decay: open ? 0.28 : 0.045, freq: 8000 });
+  }
+
+  ride(time, gain = 0.08) {
+    this.noiseHit(time, { gain, decay: 0.35, freq: 6500, type: 'highpass', send: 0.2 });
+    this.tone(time, 3150, 0.02, { type: 'sine', gain: gain * 0.25, release: 0.3, cutoff: 8000 });
+  }
+
+  brush(time, gain = 0.05, len = 0.2) {
+    this.noiseHit(time, { gain, decay: len, type: 'bandpass', freq: 3500, q: 0.6, attack: 0.04 });
   }
 
   crash(time, gain = 0.3) {
@@ -256,125 +294,33 @@ export class Music {
     this.tone(time, 2400, 0.01, { type: 'square', gain: 0.12, release: 0.03, cutoff: 6000 });
   }
 
-  // ---------- sequencing ----------
-  playStep(step, time) {
-    const bar = Math.floor(step / 16);
-    const s = step % 16;
-    const sec = sectionAt(bar);
-    if (!sec) return;
-    const m = sec.music;
-    const chord = CHORDS[bar % 4];
-    const barInSec = bar - sec.start;
-    const lastBarOfSec = bar === sec.end - 1;
-    const big = sec.energy > 1.1;
+  bell(time, freq, gain = 0.06, len = 1.2) {
+    this.tone(time, freq, 0.01, { type: 'sine', gain, release: len, cutoff: 9000, send: 0.6 });
+    this.tone(time, freq * 2.76, 0.01, { type: 'sine', gain: gain * 0.3, release: len * 0.4, cutoff: 9000, send: 0.4 });
+  }
 
-    if (s === 0 && barInSec === 0) {
-      if (sec.name !== 'Intro' && sec.name !== 'Breakdown') this.crash(time, big ? 0.4 : 0.3);
-      if (sec.energy >= 1) this.cheer(time, 0.3, 4);
-    }
+  pluck(time, freq, gain = 0.1, len = 0.25) {
+    this.tone(time, freq, 0.01, { type: 'triangle', gain, release: len, cutoff: 2500, send: 0.3 });
+  }
 
-    this.playDrums(m.drums, bar, s, time, lastBarOfSec, sec);
-
-    if (m.bass && s % 2 === 0) {
-      const oct = s === 6 || s === 14 ? 12 : 0;
-      this.tone(time, mtof(chord.root - 12 + oct), STEP * 1.6, {
-        type: 'sawtooth', gain: sec.energy < 0.4 ? 0.12 : 0.18, cutoff: 500, q: 2, release: 0.05,
-      });
-    }
-
-    if (m.pad && s === 0) {
-      for (const iv of chord.q) {
-        const f = mtof(chord.root + 12 + iv);
-        for (const det of [-8, 8]) {
-          this.tone(time, f, BAR * 0.95, {
-            type: 'sawtooth', gain: 0.028, attack: 0.25, release: 0.4, cutoff: sec.energy > 0.9 ? 2200 : 1300, detune: det, send: 0.5,
-          });
-        }
+  brass(time, notes, dur, gain = 0.06) {
+    for (const n of notes) {
+      for (const det of [-6, 6]) {
+        this.tone(time, mtof(n), dur, { type: 'sawtooth', gain, attack: 0.03, release: 0.25, cutoff: 2200, q: 1.5, detune: det, send: 0.35 });
       }
-    }
-
-    if (m.lead === 'vocal' || m.lead === 'chorus') {
-      const mel = (m.lead === 'chorus' ? CHORUS_MELODY : VERSE_MELODY)[bar % 4];
-      for (const [st, note, len] of mel) {
-        if (st === s) {
-          const shift = big ? 12 : 0;
-          this.tone(time, mtof(note - 12 + shift), len * STEP, {
-            type: 'triangle', gain: 0.17, attack: 0.04, release: 0.15, cutoff: 2600, vibrato: 5, send: 0.45,
-          });
-          this.tone(time, mtof(note - 12 + shift), len * STEP, {
-            type: 'sawtooth', gain: 0.035, attack: 0.05, release: 0.15, cutoff: 1500, q: 4, send: 0.3,
-          });
-        }
-      }
-    }
-
-    if (m.lead === 'arp') {
-      const tones = [0, ...chord.q, 12].map((iv) => chord.root + 24 + iv);
-      const order = [0, 1, 2, 3, 4, 3, 2, 1];
-      const note = tones[order[s % 8] % tones.length];
-      this.tone(time, mtof(note), STEP * 0.8, {
-        type: 'square', gain: sec.energy < 0.4 ? 0.05 : 0.06, cutoff: 2400, release: 0.12, send: 0.5,
-      });
-    }
-
-    if (m.lead === 'guitar') this.playSolo(bar, s, time, sec);
-
-    if (m.drums === 'end' && step === sec.start * 16) {
-      for (const iv of [0, 7, 12, 15, 19]) {
-        this.tone(time, mtof(45 + iv), BAR * 2.5, { type: 'sawtooth', gain: 0.05, attack: 0.02, release: 2, cutoff: 2000, dist: true, send: 0.6 });
-      }
-      this.cheer(time + 0.5, 0.6, 6);
     }
   }
 
-  playDrums(kind, bar, s, time, lastBar, sec) {
-    if (kind === 'none') return;
-    if (kind === 'intro') {
-      if (bar === 0) {
-        if (s % 4 === 0) this.stick(time);
-        return;
+  pad(time, notes, dur, { gain = 0.028, cutoff = 1300, attack = 0.25 } = {}) {
+    for (const n of notes) {
+      for (const det of [-8, 8]) {
+        this.tone(time, mtof(n), dur, { type: 'sawtooth', gain, attack, release: 0.4, cutoff, detune: det, send: 0.5 });
       }
-      if (s % 4 === 0) this.hat(time, false, 0.08);
-      if (s === 0 || (bar === 3 && s >= 8 && s % 2 === 0)) this.tom(time, bar === 3 ? 160 - s * 4 : 90, 0.5);
-      if (bar === 3 && s >= 12) this.snare(time, 0.35);
-      return;
     }
-    if (kind === 'end') {
-      if (bar === sec.start && s === 0) { this.kick(time); this.crash(time, 0.45); }
-      return;
-    }
-    if (kind === 'break') {
-      const pattern = bar % 2 === 0;
-      if (s % 4 === 0 || (pattern && s === 6)) this.kick(time, 0.8);
-      if (s === 4 || s === 12) this.snare(time, 0.5);
-      if (s % 2 === 1) this.tom(time, 120 + (s % 4) * 30, 0.35);
-      if (bar === sec.end - 2 && s >= 8) this.tom(time, 220 - (s - 8) * 15, 0.5);
-      if (bar === sec.end - 1) {
-        this.snare(time, 0.25 + s * 0.02);
-        if (s === 0) this.crash(time, 0.5);
-      }
-      return;
-    }
-    const full = kind === 'full';
-    if (s === 0 || s === 8 || (full && s === 10)) this.kick(time, full ? 0.9 : 0.75);
-    if (full && (s === 4 || s === 12)) this.snare(time);
-    if (!full && (s === 4 || s === 12)) this.noiseHit(time, { gain: 0.2, decay: 0.05, type: 'bandpass', freq: 3000 });
-    if (s % 2 === 0) this.hat(time, full && s === 14, full ? 0.12 : 0.09);
-    if (lastBar && full && s >= 12) this.snare(time, 0.3 + (s - 12) * 0.05);
   }
 
-  playSolo(bar, s, time, sec) {
-    const r = this.soloRand;
-    const intense = bar - sec.start >= 4;
-    const density = intense ? 0.85 : 0.55;
-    if (s % (intense ? 1 : 2) !== 0) return;
-    if (r() > density) return;
-    if (!this.soloIdx) this.soloIdx = 6;
-    this.soloIdx = Math.max(2, Math.min(PENTA.length - 1, this.soloIdx + Math.floor(r() * 5) - 2));
-    const note = PENTA[this.soloIdx] + (intense && r() > 0.7 ? 12 : 0);
-    const len = intense ? STEP * 0.9 : STEP * (r() > 0.7 ? 3 : 1.8);
-    this.tone(time, mtof(note - 12), len, {
-      type: 'sawtooth', gain: 0.07, attack: 0.005, release: 0.1, cutoff: 3200, q: 2, dist: true, vibrato: intense ? 0 : 4, send: 0.35,
-    });
+  voice(time, note, dur, gain = 0.17) {
+    this.tone(time, mtof(note), dur, { type: 'triangle', gain, attack: 0.04, release: 0.15, cutoff: 2600, vibrato: 5, send: 0.45 });
+    this.tone(time, mtof(note), dur, { type: 'sawtooth', gain: gain * 0.2, attack: 0.05, release: 0.15, cutoff: 1500, q: 4, send: 0.3 });
   }
 }

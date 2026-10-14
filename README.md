@@ -1,6 +1,6 @@
 # Live Shot
 
-You're the camera operator at a concert. **The Neon Foxes** play a ~2 minute song on stage, and you have three cameras to capture it. Switch between them, move them, zoom, and record the show. At the end you get a score and the actual video you recorded.
+You're the camera operator at a live show. Pick tonight's show, and you have three cameras to capture it. Switch between them, move them, zoom, and record the show. At the end you get a score and the actual video you recorded.
 
 ## Run
 
@@ -9,13 +9,16 @@ You're the camera operator at a concert. **The Neon Foxes** play a ~2 minute son
 npm run dev         # development server with live reload (http://localhost:5180)
 ```
 
-## The cameras
+## The shows
 
-| Cam | Where | Good for |
-|-----|-------|----------|
-| 1 · PIT | Tripod in the photo pit, slides along the stage front | Close-ups |
-| 2 · FOH RISER | Behind the crowd, very long zoom | Wides and telephoto |
-| 3 · STAGE WING | Handheld on stage-right (has natural shake) | Side angles, drummer and keys |
+| Show | Venue | What happens |
+|------|-------|--------------|
+| **The Neon Foxes** | Arena rock concert | Singer runs on, guitar knee slide, drum fill, singer jump, pyro finale |
+| **DJ Volta** | Warehouse rave | Lasers, CO2 cannons, a dancer's backflip, the DJ climbs the desk. Sometimes the director wants a crowd shot |
+| **The Velvet Room** | Late-night jazz club | Sax, piano and drum solos, the singer's big final note, the band's bow |
+| **The Great Zandini** | Theatre magic show | Rabbit from a hat, levitation, a vanishing box, and the assistant reappears somewhere in the audience |
+
+Each show has its own three camera positions (shown on the menu) and its own best score.
 
 ## Controls
 
@@ -23,27 +26,23 @@ npm run dev         # development server with live reload (http://localhost:5180
 
 ## Scoring
 
-- Points every second for how well the **live** camera frames whoever the director asks for. Points only count while you're recording.
-- +250 for each big moment (★) you catch: singer runs on, guitar knee slide, drum fill, singer jump, pyro finale.
+- Points every second for how well the **live** camera frames whoever the director asks for (a person, the whole band, or the crowd). Points only count while you're recording.
+- +250 for each big moment (★) you catch.
 - +50 for a good cut right at a section change. −25 for a jump cut (less than 1.2 seconds on a shot).
 - Holding one shot for more than about 12 seconds slowly earns fewer points.
 - Grades go from S to F.
 
 ## Code map
 
-- `src/show.js` – setlist, director focus, big moments (edit here to change the show)
-- `src/music.js` – synthesised band (Web Audio), synced to the show clock
-- `src/performers.js` – the band models and their choreography
-- `src/stage.js` – venue, lights, LED wall, crowd, pyro and confetti
+- `src/shows/` – one file per show: setlist, director cues, big moments, cast + choreography, music arrangement, venue config and camera rigs. `index.js` lists them.
+- `src/show.js` – show clock helpers (current section, upcoming moment) for whichever show is loaded
+- `src/people.js` – jointed people models and poses shared by all shows
+- `src/props.js` – instruments and props (drum kit, grand piano, DJ booth, magic box…)
+- `src/stage.js` – venue builder: room, stage, lights, screens, crowd, lasers, pyro, smoke and confetti
+- `src/music.js` – Web Audio synth instruments and sequencer; each show writes its own arrangement
 - `src/cameras.js` – camera rigs, limits, zoom ranges
 - `src/scoring.js` – framing evaluation and scoring
 - `src/recorder.js` – records the program feed (video + audio) to WebM
-- `src/main.js` – game loop, input, multiview rendering, HUD
+- `src/main.js` – show picker, game loop, input, multiview rendering, HUD
 
-## Ideas for later
-
-- More songs and venues (festival main stage, small club, orchestra)
-- Camera 4: a jib/crane or a dolly on a track
-- A replay review after the show that marks good and bad moments on a timeline
-- Difficulty levels (fewer cues, faster performers)
-- Show the REC/tally state on the fan LCD
+Feature backlog: see `FEATURES.md`.

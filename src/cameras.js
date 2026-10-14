@@ -1,23 +1,6 @@
 import * as THREE from 'three';
 
-export const RIG_DEFS = [
-  {
-    id: 1, name: 'PIT', blurb: 'Tripod in the photo pit – great for close-ups',
-    pos: [-4, 1.75, 3.6], look: [0, 2.3, 0.3], fov: 42,
-    bounds: { x: [-12, 12], y: [1.0, 2.6], z: [2.6, 4.2] }, fovRange: [12, 70], speed: 3.2, shake: 0, tripod: true,
-  },
-  {
-    id: 2, name: 'FOH RISER', blurb: 'Long lens at the back of the crowd – wides and tight telephoto',
-    pos: [0, 4.7, 23], look: [0, 3, -2], fov: 32,
-    bounds: { x: [-4.5, 4.5], y: [4.2, 5.8], z: [22, 24.8] }, fovRange: [3.5, 55], speed: 2.2, shake: 0, tripod: true,
-  },
-  {
-    id: 3, name: 'STAGE WING', blurb: 'Handheld on stage-right – side angles, can walk the wing',
-    pos: [11.5, 2.85, 0.5], look: [0, 2.4, -1], fov: 55,
-    bounds: { x: [9.6, 12.8], y: [2.2, 3.6], z: [-6, 2.3] }, fovRange: [18, 80], speed: 2.6, shake: 1, tripod: false,
-  },
-];
-
+// Rig definitions live in each show (src/shows/*.js) because every venue is laid out differently.
 const damp = (current, target, lambda, dt) => current + (target - current) * (1 - Math.exp(-lambda * dt));
 
 export function fovToMm(fov) {
@@ -172,7 +155,7 @@ export class CameraRig {
     if (this.legs) {
       this.legs.children.forEach((leg) => {
         const a = leg.userData.angle;
-        const h = this.pos.y - (this.id === 2 ? 3 : 0) - 0.15;
+        const h = this.pos.y - (this.def.floorY ?? 0) - 0.15;
         const spread = 0.35 + h * 0.15;
         const dx = Math.cos(a) * spread, dz = Math.sin(a) * spread;
         const len = Math.hypot(h, spread);
@@ -186,7 +169,7 @@ export class CameraRig {
     if (this.operatorBody) {
       this.model.rotation.y = this.yaw;
       this.head.rotation.set(this.pitch, 0, 0);
-      const h = this.pos.y - 1.2;
+      const h = this.pos.y - (this.def.floorY ?? 0);
       this.operatorBody.scale.y = h / 1.4;
       this.operatorBody.position.y = -h / 2 - 0.05;
     }
